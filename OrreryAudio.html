@@ -6,8 +6,8 @@
     <meta publisher="pydn"/>
 
     <!-- Audio Visualizer Properties -->
-    <meta property="pulseIntensity" label="Sun: Pulse Intensity (%)" type="number" min="0" max="150" default="100" tooltip="Controls the percentage the sun's size increases with the audio. 100 means it can double in size."/>
-    <meta property="smoothing" label="Sun: Smoothing" type="number" min="0.1" max="0.9" default="0.5" tooltip="Controls the smoothness of the pulsing animation. Lower is sharper, higher is smoother."/>
+    <meta property="pulseIntensity" label="Sun: Pulse Intensity (%)" type="number" min="0" max="1000" default="500" tooltip="Controls the percentage the sun's size increases with the audio. 100 means it can double in size."/>
+    <meta property="smoothing" label="Sun: Smoothing" type="number" min="0" max="9" default="5" tooltip="Controls the smoothness of the pulsing animation. Lower is sharper, higher is smoother."/>
     <meta property="colorChangeSpeed" label="Sun: Color Change Speed" type="number" min="0" max="10" default="3" tooltip="How quickly the sun's color shifts with changes in the audio's tone."/>
     <meta property="minSunColor" label="Sun: Quiet Color" type="color" default="#ffdd00" tooltip="The sun's core color when the audio is quiet."/>
     <meta property="maxSunColor" label="Sun: Loud Color" type="color" default="#ff4400" tooltip="The sun's core color when the audio is loud or complex."/>
@@ -17,24 +17,24 @@
     <meta property="shockwaveThreshold" label="Shockwave: Loudness Threshold (%)" type="number" min="80" max="100" default="95" tooltip="The audio level (as a percentage of max) required to trigger the effect."/>
     <meta property="shockwaveColor" label="Shockwave: Sun Color" type="color" default="#0055ff" tooltip="The color the sun flashes to during a shockwave."/>
     <meta property="shockwaveRippleColor" label="Shockwave: Ripple Color" type="color" default="#ffffff" tooltip="The color of the expanding ripple effect."/>
-    <meta property="shockwaveRippleSpeed" label="Shockwave: Ripple Speed" type="number" min="1" max="20" default="8" tooltip="How fast the shockwave ripple expands."/>
-    <meta property="shockwaveCooldown" label="Shockwave: Cooldown (seconds)" type="number" min="0.1" max="20" default="5" tooltip="Minimum time between shockwave effects."/>
+    <meta property="shockwaveRippleSpeed" label="Shockwave: Ripple Speed" type="number" min="1" max="20" default="10" tooltip="How fast the shockwave ripple expands."/>
+    <meta property="shockwaveCooldown" label="Shockwave: Cooldown (seconds)" type="number" min="1" max="20" default="5" tooltip="Minimum time between shockwave effects."/>
 
     <!-- Existing Orrery & Ripple Properties -->
     <meta property="keyRippleOn" label="Ripple: Enable Keypress Effect" type="boolean" default="1"/>
     <meta property="keyRippleColor" label="Ripple: Color" type="color" default="#00ddff"/>
-    <meta property="keyRippleSpeed" label="Ripple: Speed" type="number" min="1" max="10" default="4" tooltip="How fast the keypress ripples expand outward."/>
-    <meta property="keyRippleSize" label="Ripple: Max Size" type="number" min="10" max="100" default="40" tooltip="How large the keypress ripples get before fading out."/>
+    <meta property="keyRippleSpeed" label="Ripple: Speed" type="number" min="1" max="30" default="10" tooltip="How fast the keypress ripples expand outward."/>
+    <meta property="keyRippleSize" label="Ripple: Max Size" type="number" min="10" max="100" default="35" tooltip="How large the keypress ripples get before fading out."/>
 
-    <meta property="sunSize" label="Orrery: Sun Base Size" type="number" min="10" max="50" default="25" tooltip="Controls the base size of the central star.">
+    <meta property="sunSize" label="Orrery: Sun Base Size" type="number" min="10" max="50" default="22" tooltip="Controls the base size of the central star.">
     <meta property="numPlanets" label="Orrery: Number of Planets" type="number" min="0" max="8" default="4" tooltip="The number of planets in the system.">
-    <meta property="planetSize" label="Orrery: Planet Size" type="number" min="1" max="30" default="4" tooltip="Controls the average size of the planets.">
+    <meta property="planetSize" label="Orrery: Planet Size" type="number" min="1" max="30" default="15" tooltip="Controls the average size of the planets.">
     <meta property="orbitSpeed" label="Orrery: Orbit Speed" type="number" min="1" max="10" default="3" tooltip="The overall speed of the orbiting planets.">
     <meta property="showOrbits" label="Orrery: Show Orbital Rings" type="boolean" default="1" tooltip="Toggles the faint rings that show the path of each orbit.">
     
-    <meta property="shootingStarFrequency" label="Orrery: Shooting Star Frequency" type="number" min="0" max="10" default="4" tooltip="How often shooting stars appear. 0 is off.">
+    <meta property="shootingStarFrequency" label="Orrery: Shooting Star Frequency" type="number" min="0" max="10" default="1" tooltip="How often shooting stars appear. 0 is off.">
 
-    <meta property="shootingStarSize" label="Orrery: Shooting Star Size" type="number" min="0.5" max="10" default="1.5" tooltip="The radius of each shooting star.">
+    <meta property="shootingStarSize" label="Orrery: Shooting Star Size" type="number" min="1" max="10" default="5" tooltip="The radius of each shooting star.">
 
 </head>
 
@@ -302,7 +302,7 @@
             targetPulseAmount = 0;
         }
 
-        currentPulseAmount = lerp(currentPulseAmount, targetPulseAmount, 1 - smoothFactor);
+        currentPulseAmount = lerp(currentPulseAmount, targetPulseAmount, 1 - (smoothFactor / 10));
         const finalSunSize = sSize + currentPulseAmount;
         
         // --- Determine final sun color (check for shockwave override) ---
