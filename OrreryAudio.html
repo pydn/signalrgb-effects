@@ -2,17 +2,17 @@
 <html>
 <head>
     <title>Celestial Orrery (Audio Visualizer)</title>
-    <meta description="A celestial dance with an audio-reactive sun. Pulses with the beat and creates a shockwave on loud peaks. v2.1"/>
+    <meta description="A celestial dance with an audio-reactive sun. Pulses with the beat and creates a shockwave on loud peaks. v2.3"/>
     <meta publisher="pydn"/>
 
     <!-- Audio Visualizer Properties -->
     <meta property="pulseIntensity" label="Sun: Pulse Intensity (%)" type="number" min="0" max="1000" default="500" tooltip="Controls the percentage the sun's size increases with the audio. 100 means it can double in size."/>
-    <meta property="smoothing" label="Sun: Smoothing" type="number" min="0" max="9" default="5" tooltip="Controls the smoothness of the pulsing animation. Lower is sharper, higher is smoother."/>
-    <meta property="colorChangeSpeed" label="Sun: Color Change Speed" type="number" min="0" max="10" default="3" tooltip="How quickly the sun's color shifts with changes in the audio's tone."/>
-    <meta property="minSunColor" label="Sun: Quiet Color" type="color" default="#ffdd00" tooltip="The sun's core color when the audio is quiet."/>
-    <meta property="maxSunColor" label="Sun: Loud Color" type="color" default="#ff4400" tooltip="The sun's core color when the audio is loud or complex."/>
+    <meta property="smoothing" label="Sun: Reaction Smoothing" type="number" min="0" max="9" default="5" tooltip="Controls the smoothness of the pulse and color change. Lower is sharper, higher is smoother."/>
+    <meta property="colorChangeSpeed" label="Sun: Color Decay Speed" type="number" min="0" max="10" default="3" tooltip="How quickly the sun's color fades back to quiet when audio stops."/>
+    <meta property="minSunColor" label="Sun: Quiet Color" type="color" default="#FFB300" tooltip="The sun's core color when the audio is quiet."/>
+    <meta property="maxSunColor" label="Sun: Loud Color" type="color" default="#E53935" tooltip="The sun's core color when the audio is loud or complex."/>
     
-    <!-- NEW: Shockwave Properties -->
+    <!-- Shockwave Properties -->
     <meta property="shockwaveOn" label="Shockwave: Enable on Loud Audio" type="boolean" default="1"/>
     <meta property="shockwaveThreshold" label="Shockwave: Loudness Threshold (%)" type="number" min="80" max="100" default="95" tooltip="The audio level (as a percentage of max) required to trigger the effect."/>
     <meta property="shockwaveColor" label="Shockwave: Sun Color" type="color" default="#0055ff" tooltip="The color the sun flashes to during a shockwave."/>
@@ -33,7 +33,6 @@
     <meta property="showOrbits" label="Orrery: Show Orbital Rings" type="boolean" default="1" tooltip="Toggles the faint rings that show the path of each orbit.">
     
     <meta property="shootingStarFrequency" label="Orrery: Shooting Star Frequency" type="number" min="0" max="10" default="1" tooltip="How often shooting stars appear. 0 is off.">
-
     <meta property="shootingStarSize" label="Orrery: Shooting Star Size" type="number" min="1" max="10" default="5" tooltip="The radius of each shooting star.">
 
 </head>
@@ -106,15 +105,13 @@
             const progress = this.radius / this.maxSize;
             const alpha = 1 - progress;
             if (this.hasTrail) {
-                // Shockwave ripple with a dissipating white trail
-                const lineWidth = Math.max(1, 15 * (1 - progress)); // Starts thick, gets thin
+                const lineWidth = Math.max(1, 15 * (1 - progress));
                 context.lineWidth = lineWidth;
                 context.strokeStyle = `hsla(${this.hsl.h}, ${this.hsl.s}%, ${this.hsl.l}%, ${alpha * 0.8})`;
                 context.beginPath();
                 context.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
                 context.stroke();
             } else {
-                // Original keypress ripple (filled circle)
                 context.fillStyle = `hsla(${this.hsl.h}, ${this.hsl.s}%, ${this.hsl.l}%, ${alpha})`;
                 context.beginPath();
                 context.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
@@ -189,7 +186,7 @@
         if (typeof keyRippleOn !== 'undefined' && keyRippleOn) {
             const speed = (typeof keyRippleSpeed !== 'undefined' ? keyRippleSpeed : 4) / 10.0;
             const size = typeof keyRippleSize !== 'undefined' ? keyRippleSize : 40;
-            ripples.push(new Ripple(x, y, rippleColorHSL, speed, size, false)); // false for no trail
+            ripples.push(new Ripple(x, y, rippleColorHSL, speed, size, false));
         }
     }
 
@@ -199,69 +196,55 @@
     function render() {
         window.requestAnimationFrame(render);
         
-        // --- Handle Timers for animations and cooldowns ---
         const now = performance.now();
-        if (lastTime === 0) { lastTime = now; } // Initialize on first frame
-        const deltaTime = (now - lastTime) / 1000.0; // Time since last frame in seconds
+        if (lastTime === 0) { lastTime = now; }
+        const deltaTime = (now - lastTime) / 1000.0;
         lastTime = now;
 
         if (shockwaveCooldownTimer > 0) { shockwaveCooldownTimer -= deltaTime; }
         if (shockwaveTimer > 0) { shockwaveTimer -= deltaTime; }
 
         checkPlanetConfig();
-        // --- Read properties from UI ---
+        
         const sSize = typeof sunSize !== 'undefined' ? sunSize : 25;
         const oSpeed = typeof orbitSpeed !== 'undefined' ? orbitSpeed : 3;
         const sOrbits = typeof showOrbits !== 'undefined' ? showOrbits : 1;
         const starFreq = typeof shootingStarFrequency !== 'undefined' ? shootingStarFrequency : 4;
 
-        // --- Audio Viz Properties ---
         const pIntensity = typeof pulseIntensity !== 'undefined' ? pulseIntensity : 100;
         const smoothFactor = typeof smoothing !== 'undefined' ? smoothing : 0.5;
-        const cColorSpeed = (typeof colorChangeSpeed !== 'undefined' ? colorChangeSpeed : 3) / 100;
+        const decaySpeed = (typeof colorChangeSpeed !== 'undefined' ? colorChangeSpeed : 3) / 100;
         const minColor = hexToHSL(typeof minSunColor !== 'undefined' ? minSunColor : "#ffdd00");
         const maxColor = hexToHSL(typeof maxSunColor !== 'undefined' ? maxSunColor : "#ff4400");
         
-        // --- Get Audio Data ---
         let level = -100;
-        let density = 0;
         let audioIsActive = false;
-        
         if (typeof engine !== 'undefined' && engine.audio) {
             level = engine.audio.level || -100;
-            density = engine.audio.density || 0;
-            if (level > -100) {
-                audioIsActive = true;
-            }
+            if (level > -100) { audioIsActive = true; }
         }
         
-        const levelNormalized = (level + 100) / 100; // 0 to 1
+        const levelNormalized = (level + 100) / 100;
 
-        // --- Handle Shockwave Trigger ---
         if (audioIsActive) {
             const sOn = typeof shockwaveOn !== 'undefined' ? shockwaveOn : true;
             if (sOn && shockwaveCooldownTimer <= 0) {
                 const sThreshold = (typeof shockwaveThreshold !== 'undefined' ? shockwaveThreshold : 95) / 100.0;
                 if (levelNormalized >= sThreshold) {
-                    // Trigger the effect!
                     shockwaveTimer = SHOCKWAVE_BLUE_DURATION;
                     const sCooldown = typeof shockwaveCooldown !== 'undefined' ? shockwaveCooldown : 0.8;
                     shockwaveCooldownTimer = sCooldown;
-
-                    // Create the shockwave ripple
                     const sRippleSpeed = (typeof shockwaveRippleSpeed !== 'undefined' ? shockwaveRippleSpeed : 8) / 10.0;
                     const sRippleColorHSL = hexToHSL(typeof shockwaveRippleColor !== 'undefined' ? shockwaveRippleColor : '#FFFFFF');
-                    const rippleSize = Math.max(width, height) * 1.2; // Ensure it goes fully off screen
+                    const rippleSize = Math.max(width, height) * 1.2;
                     ripples.push(new Ripple(fixedCenterX, fixedCenterY, sRippleColorHSL, sRippleSpeed, rippleSize, true));
                 }
             }
         }
         
-        // --- Set Background ---
         ctx.fillStyle = '#050214';
         ctx.fillRect(0, 0, width, height);
 
-        // --- Handle Shooting Stars ---
         if (Math.random() < (starFreq / 100) && shootingStars.length < 5) {
             shootingStars.push(new ShootingStar());
         }
@@ -282,37 +265,54 @@
 
         // --- Update Sun State based on Audio ---
         let targetPulseAmount = 0;
+        let targetSunColor = {};
 
+        // ============================================================================
+        // ## FIX v2.3: Synchronized color and pulse reaction
+        // The color and size now react to the same 'effectiveLevel' value, making
+        // them pulse in unison. The 'Smoothing' property now controls the reaction
+        // speed for both effects, ensuring they are always in sync.
+        // ============================================================================
         if (audioIsActive) {
-            // ---- Sun is REACTIVE ----
-            currentSunColor.h = lerpHue(currentSunColor.h, lerpHue(minColor.h, maxColor.h, density), cColorSpeed);
-            currentSunColor.s = lerp(currentSunColor.s, lerp(minColor.s, maxColor.s, density), cColorSpeed);
-            currentSunColor.l = lerp(currentSunColor.l, lerp(minColor.l, maxColor.l, density), cColorSpeed);
-            
             const effectiveLevel = Math.pow(levelNormalized, 50); 
+            
+            // Set the target for the size pulse
             const pulseMultiplier = (effectiveLevel * pIntensity) / 100.0;
             targetPulseAmount = sSize * pulseMultiplier;
+            
+            // Set the target for the color change using the same level
+            targetSunColor.h = lerpHue(minColor.h, maxColor.h, effectiveLevel);
+            targetSunColor.s = lerp(minColor.s, maxColor.s, effectiveLevel);
+            targetSunColor.l = lerp(minColor.l, maxColor.l, effectiveLevel);
+            
+            // Smoothly move the current values towards their targets
+            const smoothingFactor = 1 - (smoothFactor / 10);
+            currentPulseAmount = lerp(currentPulseAmount, targetPulseAmount, smoothingFactor);
+            currentSunColor.h = lerpHue(currentSunColor.h, targetSunColor.h, smoothingFactor);
+            currentSunColor.s = lerp(currentSunColor.s, targetSunColor.s, smoothingFactor);
+            currentSunColor.l = lerp(currentSunColor.l, targetSunColor.l, smoothingFactor);
 
         } else {
             // ---- Sun is STATIC / DECAYING ----
-            currentSunColor.h = lerpHue(currentSunColor.h, minColor.h, cColorSpeed);
-            currentSunColor.s = lerp(currentSunColor.s, minColor.s, cColorSpeed);
-            currentSunColor.l = lerp(currentSunColor.l, minColor.l, cColorSpeed);
-            
+            // When audio is quiet, smoothly return to the base 'Quiet Color' and size.
             targetPulseAmount = 0;
+            targetSunColor = minColor;
+
+            // Use the dedicated decay speed for a gentle fade out
+            currentPulseAmount = lerp(currentPulseAmount, targetPulseAmount, decaySpeed);
+            currentSunColor.h = lerpHue(currentSunColor.h, targetSunColor.h, decaySpeed);
+            currentSunColor.s = lerp(currentSunColor.s, targetSunColor.s, decaySpeed);
+            currentSunColor.l = lerp(currentSunColor.l, targetSunColor.l, decaySpeed);
         }
 
-        currentPulseAmount = lerp(currentPulseAmount, targetPulseAmount, 1 - (smoothFactor / 10));
         const finalSunSize = sSize + currentPulseAmount;
         
-        // --- Determine final sun color (check for shockwave override) ---
         let sunColorToDraw = currentSunColor;
         if (shockwaveTimer > 0) {
             const sColor = typeof shockwaveColor !== 'undefined' ? shockwaveColor : '#0055ff';
             sunColorToDraw = hexToHSL(sColor);
         }
         
-        // --- Draw the Sun's Core and Halo ---
         const sunHalo = ctx.createRadialGradient(fixedCenterX, fixedCenterY, 0, fixedCenterX, fixedCenterY, finalSunSize * 1.5);
         sunHalo.addColorStop(0, `hsla(${sunColorToDraw.h}, ${sunColorToDraw.s}%, ${sunColorToDraw.l}%, 0.8)`);
         sunHalo.addColorStop(1, `hsla(${sunColorToDraw.h}, ${sunColorToDraw.s}%, ${sunColorToDraw.l - 10}%, 0)`);
@@ -324,7 +324,6 @@
         ctx.arc(fixedCenterX, fixedCenterY, finalSunSize, 0, Math.PI * 2);
         ctx.fill();
 
-        // --- Draw Planets and their Orbits ---
         planets.forEach(p => {
             p.angle += p.speed * oSpeed * 0.3;
             const x = fixedCenterX + Math.cos(p.angle) * p.distance;
@@ -342,7 +341,6 @@
             ctx.fill();
         });
         
-        // --- Update and Draw Ripples ---
         for (let i = ripples.length - 1; i >= 0; i--) {
             const r = ripples[i];
             r.update(); r.draw(ctx);
