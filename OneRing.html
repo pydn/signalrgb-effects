@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>One Ring's Echo</title>
+    <meta description="The One Ring pulses with power as the Nazgûl circle it."/>
+    <meta publisher="Concept by Gemini" />
+
+    <meta property="inscriptionFrequency" label="Inscription Frequency" type="number" min="1" max="10" default="3" tooltip="How often the fiery inscription appears on the Ring.">
+    <meta property="inscriptionSpeed" label="Inscription Speed" type="number" min="1" max="10" default="5" tooltip="How fast the inscription text travels around the Ring.">
+    <meta property="wraithCount" label="Number of Wraiths" type="number" min="1" max="9" default="5" tooltip="The number of Nazgûl wisps circling the Ring.">
+    <meta property="wraithSpeed" label="Wraith Speed" type="number" min="1" max="10" default="4" tooltip="The orbital speed of the Nazgûl wisps.">
+
+</head>
+
+<body style="margin: 0; padding: 0;">
+    <canvas id="oneRingCanvas" width="320" height="200"></canvas>
+</body>
+
+<script>
+    //================================================
+    // 1. SETUP & INITIALIZATION
+    //================================================
+    const c = document.getElementById("oneRingCanvas");
+    const ctx = c.getContext("2d");
+    const width = c.width;
+    const height = c.height;
+    
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const ringRadius = 35; // <-- CHANGED: Was 50
+    const ringWidth = 15;  // <-- CHANGED: Was 10
+
+    const wraiths = [];
+    const inscriptionParticles = [];
+
+    // A Wraith is a ghostly orb that circles the ring
+    function Wraith(distance, speed, size) {
+        this.distance = distance;
+        this.speed = speed;
+        this.size = size;
+        this.angle = Math.random() * Math.PI * 2;
+    }
+
+    // A particle that makes up the fiery inscription
+    function InscriptionParticle(angle) {
+        this.angle = angle;
+        this.lifetime = 150; // How long the particle lasts
+    }
+
+    function init() {
+        wraiths.length = 0;
+        const wraithNum = typeof wraithCount !== 'undefined' ? wraithCount : 5;
+        for (let i = 0; i < wraithNum; i++) {
+            // Give them slightly varied orbits to look more chaotic
+            const distance = ringRadius + 20 + (i * 5) + (Math.random() * 10);
+            const speed = (0.005 / (i + 1)) * 0.5 + 0.005;
+            const size = Math.random() * 8 + 5;
+            wraiths.push(new Wraith(distance, speed, size));
+        }
+    }
+    
+    let currentWraithCount = 0;
+    function checkWraithCount() {
+        const wraithNum = typeof wraithCount !== 'undefined' ? wraithCount : 5;
+        if(wraithNum !== currentWraithCount) {
+            currentWraithCount = wraithNum;
+            init();
+        }
+    }
+
+    let time = 0;
+
+    //================================================
+    // 2. THE UPDATE (RENDER) FUNCTION
+    //================================================
+    function render() {
+        checkWraithCount();
+        const inscFreq = typeof inscriptionFrequency !== 'undefined' ? inscriptionFrequency : 3;
+        const inscSpeed = typeof inscriptionSpeed !== 'undefined' ? inscriptionSpeed : 5;
+        const wSpeed = typeof wraithSpeed !== 'undefined' ? wraithSpeed : 4;
+
+        time += 0.01;
+
+        // --- 1. Draw Mordor Background & Ring's Aura ---
+        ctx.fillStyle = '#0a0505'; // A black tinged with red
+        ctx.fillRect(0, 0, width, height);
+        
+        const auraPulse = Math.sin(time * 2) * 20 + 80;
+        const aura = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, ringRadius + auraPulse);
+        aura.addColorStop(0, 'rgba(80, 5, 5, 0.3)');
+        aura.addColorStop(1, 'rgba(80, 5, 5, 0)');
+        ctx.fillStyle = aura;
+        ctx.fillRect(0, 0, width, height);
+
+        // --- 2. Draw the One Ring ---
+        // Use a shadow to create a golden glow
+        ctx.shadowColor = 'rgba(255, 200, 0, 0.7)';
+        ctx.shadowBlur = 15;
+        ctx.strokeStyle = '#FFD700'; // Gold color
+        ctx.lineWidth = ringWidth;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0; // Reset shadow for other elements
+
+        // --- 3. Animate and Draw the Fiery Inscription ---
+        // Decide if the inscription should be active
+        const inscriptionWave = Math.sin(time * inscFreq);
+        if (inscriptionWave > 0.5) {
+            // While active, add new particles
+            const particleAngle = (time * inscSpeed) % (Math.PI * 2);
+            inscriptionParticles.push(new InscriptionParticle(particleAngle));
+        }
+        
+        // Update and draw all active inscription particles
+        for (let i = inscriptionParticles.length - 1; i >= 0; i--) {
+            const p = inscriptionParticles[i];
+            p.lifetime--;
+
+            if (p.lifetime <= 0) {
+                inscriptionParticles.splice(i, 1); // Remove dead particles
+            } else {
+                const x = centerX + Math.cos(p.angle) * ringRadius;
+                const y = centerY + Math.sin(p.angle) * ringRadius;
+                const opacity = p.lifetime / 100;
+                
+                ctx.fillStyle = `rgba(255, 100, 0, ${opacity})`;
+                ctx.shadowColor = 'rgba(255, 0, 0, 0.9)';
+                ctx.shadowBlur = 5;
+                ctx.beginPath();
+                ctx.arc(x, y, 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        // --- 4. Animate and Draw the Wraith Wisps ---
+        wraiths.forEach(w => {
+            w.angle += w.speed * wSpeed;
+            const x = centerX + Math.cos(w.angle) * w.distance;
+            const y = centerY + Math.sin(w.angle) * w.distance;
+
+            // Draw them as smoky, ethereal gradients
+            const wraithGradient = ctx.createRadialGradient(x, y, 0, x, y, w.size);
+            wraithGradient.addColorStop(0, 'rgba(60, 30, 60, 0.5)'); // Dark Purple center
+            wraithGradient.addColorStop(0.5, 'rgba(10, 5, 10, 0.2)');
+            wraithGradient.addColorStop(1, 'rgba(5, 0, 5, 0)');
+            
+            ctx.fillStyle = wraithGradient;
+            ctx.beginPath();
+            ctx.arc(x, y, w.size, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        window.requestAnimationFrame(render);
+    }
+
+    // --- Start Everything ---
+    init();
+    render();
+</script>
+</html>

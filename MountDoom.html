@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>The Forging in Mount Doom</title>
+    <meta description="A dynamic scene of the Great Forge, with swirling lava, rising embers, and fiery reactions to keypresses and system load."/>
+    <meta publisher="Concept by Gemini" />
+
+    <!-- Forge Background Layer -->
+    <meta property="forgeSpeed" label="Forge: Swirl Speed" type="number" min="0" max="10" default="2" tooltip="How fast the molten forge swirls."/>
+    
+    <!-- Embers Foreground Layer -->
+    <meta property="emberDensity" label="Embers: Density" type="number" min="0" max="100" default="40" tooltip="The number of embers rising from the forge."/>
+    <meta property="emberSpeed" label="Embers: Rise Speed" type="number" min="1" max="10" default="3" tooltip="How fast the embers float upwards."/>
+
+    <!-- Hammer Blow Keypress Effect -->
+    <meta property="hammerOn" label="Hammer: Enable Keypress Effect" type="boolean" default="1"/>
+    <meta property="shockwaveColor" label="Hammer: Shockwave Color" type="color" default="#ff8d00" />
+    <meta property="shockwaveSize" label="Hammer: Shockwave Size" type="number" min="10" max="150" default="60"/>
+    
+    <!-- Inscription Glow Sensor Effect -->
+    <meta property="inscriptionOn" label="Inscription: Enable Sensor Effect" type="boolean" default="1"/>
+    <meta property="inscriptionThreshold" label="Inscription: Sensor Threshold (%)" type="number" min="50" max="100" default="85" tooltip="The sensor load percentage required to trigger the inscription glow."/>
+    <meta property="dataSource" type="sensor" label="Inscription: Data Source" default="CPU Load" />
+
+</head>
+
+<body style="margin: 0; padding: 0;">
+    <canvas id="forgeCanvas" width="320" height="200"></canvas>
+</body>
+
+<script>
+    //================================================
+    // 1. SETUP & INITIALIZATION
+    //================================================
+    const c = document.getElementById("forgeCanvas");
+    const ctx = c.getContext("2d");
+    const width = c.width;
+    const height = c.height;
+
+    // --- Effect Arrays ---
+    const embers = [];
+    const hammerEffects = []; // For shockwaves and flashes
+    let inscription = null; // Can only be one at a time
+
+    // --- Noise generation for the forge ---
+    const noiseCanvas = document.createElement('canvas');
+    noiseCanvas.width = 32;
+    noiseCanvas.height = 20;
+    const noiseCtx = noiseCanvas.getContext('2d');
+    const noiseData = noiseCtx.createImageData(noiseCanvas.width, noiseCanvas.height);
+    const noise = new Array(noiseCanvas.width * noiseCanvas.height);
+    
+    // --- Helper Functions ---
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function hexToHSL(hex) {
+        const [, r, g, b] = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex) || [];
+        const rgb = [r, g, b].map(x => parseInt(x, 16) / 255);
+        const max = Math.max(...rgb); const min = Math.min(...rgb);
+        const l = (max + min) / 2;
+        if (max === min) return { h: 0, s: 0, l: Math.round(l * 100) };
+        const d = max - min;
+        const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        let h;
+        const [nr, ng, nb] = rgb;
+        if (max === nr) h = (ng - nb) / d + (ng < nb ? 6 : 0);
+        else if (max === ng) h = (nb - nr) / d + 2;
+        else h = (nr - ng) / d + 4;
+        return { h: Math.round(h * 60), s: Math.round(s * 100), l: Math.round(l * 100) };
+    }
+
+    //================================================
+    // 2. EFFECT OBJECTS
+    //================================================
+
+    function Ember() {
+        this.x = Math.random() * width;
+        this.y = height + Math.random() * 20;
+        const speedMultiplier = (typeof emberSpeed !== 'undefined' ? emberSpeed : 3) / 3;
+        this.speed = (Math.random() * 0.5 + 0.2) * speedMultiplier;
+        this.size = Math.random() * 1.5 + 0.5;
+        this.lifetime = 1.0;
+        this.isDead = false;
+
+        this.update = function() {
+            this.y -= this.speed;
+            this.lifetime -= 0.005 * speedMultiplier;
+            if (this.y < -this.size || this.lifetime <= 0) {
+                this.isDead = true;
+            }
+        };
+
+        this.draw = function(context) {
+            context.fillStyle = `rgba(255, 200, 100, ${this.lifetime * 0.8})`;
+            context.beginPath();
+            context.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            context.fill();
+        };
+    }
+
+    function HammerShockwave(x, y, hslColor, maxSize) {
+        this.x = x; this.y = y; this.hsl = hslColor;
+        this.maxSize = maxSize;
+        this.radius = 0; this.isDead = false;
+
+        this.update = function() {
+            this.radius += this.maxSize / 20; // Fast expansion
+            if (this.radius >= this.maxSize) this.isDead = true;
+        };
+        this.draw = function(context) {
+            const alpha = 0.9 * (1 - (this.radius / this.maxSize));
+            context.strokeStyle = `hsla(${this.hsl.h}, ${this.hsl.s}%, ${this.hsl.l}%, ${alpha})`;
+            context.lineWidth = 3;
+            context.beginPath();
+            context.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            context.stroke();
+        };
+    }
+    
+    function HammerFlash(x, y) {
+        this.x = x; this.y = y; this.lifetime = 1.0; this.isDead = false;
+        
+        this.update = function() {
+            this.lifetime -= 0.08;
+            if (this.lifetime <= 0) this.isDead = true;
+        };
+        this.draw = function(context) {
+            context.fillStyle = `rgba(255, 255, 255, ${this.lifetime})`;
+            context.beginPath();
+            context.arc(this.x, this.y, 20, 0, Math.PI * 2);
+            context.fill();
+        };
+    }
+    
+    function InscriptionGlow() {
+        this.y = Math.random() * (height - 20) + 10;
+        this.x = -width; // Start off-screen
+        this.lifetime = 1.0;
+        this.isDead = false;
+
+        this.update = function() {
+            this.x += width / 45; // Sweep across in ~45 frames
+            if(this.x > width) this.isDead = true;
+        };
+        this.draw = function(context) {
+            const gradient = context.createLinearGradient(this.x, this.y, this.x + 100, this.y);
+            gradient.addColorStop(0, "rgba(255, 220, 0, 0)");
+            gradient.addColorStop(0.5, "rgba(255, 220, 0, 1)");
+            gradient.addColorStop(1, "rgba(255, 220, 0, 0)");
+            context.fillStyle = gradient;
+            context.fillRect(this.x - 50, this.y - 5, 200, 10);
+        };
+    }
+
+    //================================================
+    // 3. EVENT HANDLERS
+    //================================================
+    let shockwaveColorHSL = hexToHSL("#ff8d00");
+    function onshockwaveColorChanged() {
+        if(typeof shockwaveColor !== 'undefined') {
+            shockwaveColorHSL = hexToHSL(shockwaveColor);
+        }
+    }
+
+    function onCanvasTapped(x, y) {
+        if (typeof hammerOn === 'undefined' || hammerOn) {
+            const size = typeof shockwaveSize !== 'undefined' ? shockwaveSize : 60;
+            hammerEffects.push(new HammerFlash(x, y));
+            hammerEffects.push(new HammerShockwave(x, y, shockwaveColorHSL, size));
+        }
+    }
+
+    //================================================
+    // 4. MAIN RENDER LOOP
+    //================================================
+    let lastInscriptionTime = 0;
+
+    function render() {
+        const now = Date.now();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = 'rgb(10, 3, 0)';
+        ctx.fillRect(0, 0, width, height);
+
+        // --- 1. Draw Forge Background ---
+        const speed = (typeof forgeSpeed !== 'undefined' ? forgeSpeed : 2) * 0.0001;
+        for (let i = 0; i < noise.length; i++) {
+            const x = i % noiseCanvas.width;
+            const y = Math.floor(i / noiseCanvas.width);
+            const value = Math.abs(noise[i] + Math.sin(x * 0.1 + now * speed) + Math.cos(y * 0.1 + now * speed * 2));
+            const r = lerp(50, 255, value % 1);
+            const g = lerp(10, 150, value % 1);
+            const b = 5;
+            const index = i * 4;
+            noiseData.data[index] = r;
+            noiseData.data[index + 1] = g;
+            noiseData.data[index + 2] = b;
+            noiseData.data[index + 3] = 255;
+        }
+        noiseCtx.putImageData(noiseData, 0, 0);
+        ctx.globalAlpha = 0.8;
+        ctx.drawImage(noiseCanvas, 0, 0, width, height);
+        ctx.globalAlpha = 1.0;
+        
+        // --- 2. Update and Draw Embers ---
+        const density = typeof emberDensity !== 'undefined' ? emberDensity : 40;
+        if (embers.length < density && Math.random() < density / 100) {
+            embers.push(new Ember());
+        }
+        for (let i = embers.length - 1; i >= 0; i--) {
+            embers[i].update();
+            embers[i].draw(ctx);
+            if (embers[i].isDead) embers.splice(i, 1);
+        }
+
+        // --- 3. Handle Sensor-based Inscription ---
+        if (typeof inscriptionOn === 'undefined' || inscriptionOn) {
+            let sensorValue = 0;
+            if (typeof dataSource !== 'undefined' && typeof engine.getSensorValue === 'function') {
+                const sensorData = engine.getSensorValue(dataSource);
+                if (sensorData && sensorData.value) {
+                    sensorValue = (sensorData.value - sensorData.min) / (sensorData.max - sensorData.min) || 0;
+                }
+            }
+            const threshold = (typeof inscriptionThreshold !== 'undefined' ? inscriptionThreshold : 85) / 100;
+            if (sensorValue >= threshold && !inscription && (now - lastInscriptionTime > 5000)) {
+                inscription = new InscriptionGlow();
+                lastInscriptionTime = now;
+            }
+        }
+
+        // --- 4. Draw Interactive Effects (Hammer & Inscription) ---
+        ctx.globalCompositeOperation = 'lighter'; // Additive blending for fiery effects
+        if (inscription) {
+            inscription.update();
+            inscription.draw(ctx);
+            if (inscription.isDead) inscription = null;
+        }
+        for (let i = hammerEffects.length - 1; i >= 0; i--) {
+            hammerEffects[i].update();
+            hammerEffects[i].draw(ctx);
+            if (hammerEffects[i].isDead) hammerEffects.splice(i, 1);
+        }
+        
+        window.requestAnimationFrame(render);
+    }
+    
+    // Initialize the noise array
+    for (let i = 0; i < noise.length; i++) { noise[i] = Math.random(); }
+    
+    // Initialize color property
+    onshockwaveColorChanged();
+    
+    render();
+</script>
+</html>
