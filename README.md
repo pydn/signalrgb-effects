@@ -1,1 +1,0 @@
-# signalrgb-effects
