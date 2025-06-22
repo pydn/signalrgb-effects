@@ -2,7 +2,7 @@
 <html>
 <head>
     <title>Celestial Orrery (Audio Visualizer)</title>
-    <meta description="A celestial dance with an audio-reactive sun that pulses with the beat. v2.0"/>
+    <meta description="A celestial dance with an audio-reactive sun. Pulses with the beat and creates a shockwave on loud peaks. v2.1"/>
     <meta publisher="pydn"/>
 
     <!-- Audio Visualizer Properties -->
@@ -12,11 +12,19 @@
     <meta property="minSunColor" label="Sun: Quiet Color" type="color" default="#ffdd00" tooltip="The sun's core color when the audio is quiet."/>
     <meta property="maxSunColor" label="Sun: Loud Color" type="color" default="#ff4400" tooltip="The sun's core color when the audio is loud or complex."/>
     
+    <!-- NEW: Shockwave Properties -->
+    <meta property="shockwaveOn" label="Shockwave: Enable on Loud Audio" type="boolean" default="1"/>
+    <meta property="shockwaveThreshold" label="Shockwave: Loudness Threshold (%)" type="number" min="80" max="100" default="95" tooltip="The audio level (as a percentage of max) required to trigger the effect."/>
+    <meta property="shockwaveColor" label="Shockwave: Sun Color" type="color" default="#0055ff" tooltip="The color the sun flashes to during a shockwave."/>
+    <meta property="shockwaveRippleColor" label="Shockwave: Ripple Color" type="color" default="#ffffff" tooltip="The color of the expanding ripple effect."/>
+    <meta property="shockwaveRippleSpeed" label="Shockwave: Ripple Speed" type="number" min="1" max="20" default="8" tooltip="How fast the shockwave ripple expands."/>
+    <meta property="shockwaveCooldown" label="Shockwave: Cooldown (seconds)" type="number" min="0.1" max="20" default="5" tooltip="Minimum time between shockwave effects."/>
+
     <!-- Existing Orrery & Ripple Properties -->
     <meta property="keyRippleOn" label="Ripple: Enable Keypress Effect" type="boolean" default="1"/>
     <meta property="keyRippleColor" label="Ripple: Color" type="color" default="#00ddff"/>
-    <meta property="keyRippleSpeed" label="Ripple: Speed" type="number" min="1" max="10" default="4" tooltip="How fast the ripples expand outward."/>
-    <meta property="keyRippleSize" label="Ripple: Max Size" type="number" min="10" max="100" default="40" tooltip="How large the ripples get before fading out."/>
+    <meta property="keyRippleSpeed" label="Ripple: Speed" type="number" min="1" max="10" default="4" tooltip="How fast the keypress ripples expand outward."/>
+    <meta property="keyRippleSize" label="Ripple: Max Size" type="number" min="10" max="100" default="40" tooltip="How large the keypress ripples get before fading out."/>
 
     <meta property="sunSize" label="Orrery: Sun Base Size" type="number" min="10" max="50" default="25" tooltip="Controls the base size of the central star.">
     <meta property="numPlanets" label="Orrery: Number of Planets" type="number" min="0" max="8" default="4" tooltip="The number of planets in the system.">
@@ -53,6 +61,12 @@
     let currentSunColor = { h: 50, s: 95, l: 50 };
     let currentPulseAmount = 0; // The current size increase from the pulse
 
+    // --- Shockwave State ---
+    let lastTime = 0;
+    let shockwaveCooldownTimer = 0;
+    let shockwaveTimer = 0;
+    const SHOCKWAVE_BLUE_DURATION = 0.3; // How long the sun stays blue, in seconds
+
     // --- Utility Functions ---
     function lerp(a, b, t) { return a + (b - a) * t; }
     function lerpHue(a, b, t) {
@@ -80,17 +94,32 @@
     }
 
     // --- Object Constructors ---
-    function Ripple(x, y, hslColor, speed, maxSize) {
+    function Ripple(x, y, hslColor, speed, maxSize, hasTrail = false) {
         this.x = x; this.y = y; this.hsl = hslColor;
         this.speed = speed; this.maxSize = maxSize; this.radius = 0; this.isDead = false;
+        this.hasTrail = hasTrail;
         this.update = function() {
             this.radius += this.speed;
             if (this.radius >= this.maxSize) this.isDead = true;
         };
         this.draw = function(context) {
-            const alpha = 1 - (this.radius / this.maxSize);
-            context.fillStyle = `hsla(${this.hsl.h}, ${this.hsl.s}%, ${this.hsl.l}%, ${alpha})`;
-            context.beginPath(); context.arc(this.x, this.y, this.radius, 0, Math.PI * 2); context.fill();
+            const progress = this.radius / this.maxSize;
+            const alpha = 1 - progress;
+            if (this.hasTrail) {
+                // Shockwave ripple with a dissipating white trail
+                const lineWidth = Math.max(1, 15 * (1 - progress)); // Starts thick, gets thin
+                context.lineWidth = lineWidth;
+                context.strokeStyle = `hsla(${this.hsl.h}, ${this.hsl.s}%, ${this.hsl.l}%, ${alpha * 0.8})`;
+                context.beginPath();
+                context.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                context.stroke();
+            } else {
+                // Original keypress ripple (filled circle)
+                context.fillStyle = `hsla(${this.hsl.h}, ${this.hsl.s}%, ${this.hsl.l}%, ${alpha})`;
+                context.beginPath();
+                context.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                context.fill();
+            }
         };
     }
 
@@ -160,7 +189,7 @@
         if (typeof keyRippleOn !== 'undefined' && keyRippleOn) {
             const speed = (typeof keyRippleSpeed !== 'undefined' ? keyRippleSpeed : 4) / 10.0;
             const size = typeof keyRippleSize !== 'undefined' ? keyRippleSize : 40;
-            ripples.push(new Ripple(x, y, rippleColorHSL, speed, size));
+            ripples.push(new Ripple(x, y, rippleColorHSL, speed, size, false)); // false for no trail
         }
     }
 
@@ -170,6 +199,15 @@
     function render() {
         window.requestAnimationFrame(render);
         
+        // --- Handle Timers for animations and cooldowns ---
+        const now = performance.now();
+        if (lastTime === 0) { lastTime = now; } // Initialize on first frame
+        const deltaTime = (now - lastTime) / 1000.0; // Time since last frame in seconds
+        lastTime = now;
+
+        if (shockwaveCooldownTimer > 0) { shockwaveCooldownTimer -= deltaTime; }
+        if (shockwaveTimer > 0) { shockwaveTimer -= deltaTime; }
+
         checkPlanetConfig();
         // --- Read properties from UI ---
         const sSize = typeof sunSize !== 'undefined' ? sunSize : 25;
@@ -194,6 +232,28 @@
             density = engine.audio.density || 0;
             if (level > -100) {
                 audioIsActive = true;
+            }
+        }
+        
+        const levelNormalized = (level + 100) / 100; // 0 to 1
+
+        // --- Handle Shockwave Trigger ---
+        if (audioIsActive) {
+            const sOn = typeof shockwaveOn !== 'undefined' ? shockwaveOn : true;
+            if (sOn && shockwaveCooldownTimer <= 0) {
+                const sThreshold = (typeof shockwaveThreshold !== 'undefined' ? shockwaveThreshold : 95) / 100.0;
+                if (levelNormalized >= sThreshold) {
+                    // Trigger the effect!
+                    shockwaveTimer = SHOCKWAVE_BLUE_DURATION;
+                    const sCooldown = typeof shockwaveCooldown !== 'undefined' ? shockwaveCooldown : 0.8;
+                    shockwaveCooldownTimer = sCooldown;
+
+                    // Create the shockwave ripple
+                    const sRippleSpeed = (typeof shockwaveRippleSpeed !== 'undefined' ? shockwaveRippleSpeed : 8) / 10.0;
+                    const sRippleColorHSL = hexToHSL(typeof shockwaveRippleColor !== 'undefined' ? shockwaveRippleColor : '#FFFFFF');
+                    const rippleSize = Math.max(width, height) * 1.2; // Ensure it goes fully off screen
+                    ripples.push(new Ripple(fixedCenterX, fixedCenterY, sRippleColorHSL, sRippleSpeed, rippleSize, true));
+                }
             }
         }
         
@@ -229,13 +289,7 @@
             currentSunColor.s = lerp(currentSunColor.s, lerp(minColor.s, maxColor.s, density), cColorSpeed);
             currentSunColor.l = lerp(currentSunColor.l, lerp(minColor.l, maxColor.l, density), cColorSpeed);
             
-            const levelNormalized = (level + 100) / 100; // 0 to 1
-            
-            // This makes the pulse much more responsive to loud beats and less so to quiet noise,
-            // creating a more "dramatic" and noticeable pulse.
             const effectiveLevel = Math.pow(levelNormalized, 50); 
-
-            // Convert intensity percentage to a multiplier for the sun's base size
             const pulseMultiplier = (effectiveLevel * pIntensity) / 100.0;
             targetPulseAmount = sSize * pulseMultiplier;
 
@@ -248,18 +302,24 @@
             targetPulseAmount = 0;
         }
 
-        // Smoothly interpolate the pulse amount towards its target
         currentPulseAmount = lerp(currentPulseAmount, targetPulseAmount, 1 - smoothFactor);
         const finalSunSize = sSize + currentPulseAmount;
         
+        // --- Determine final sun color (check for shockwave override) ---
+        let sunColorToDraw = currentSunColor;
+        if (shockwaveTimer > 0) {
+            const sColor = typeof shockwaveColor !== 'undefined' ? shockwaveColor : '#0055ff';
+            sunColorToDraw = hexToHSL(sColor);
+        }
+        
         // --- Draw the Sun's Core and Halo ---
         const sunHalo = ctx.createRadialGradient(fixedCenterX, fixedCenterY, 0, fixedCenterX, fixedCenterY, finalSunSize * 1.5);
-        sunHalo.addColorStop(0, `hsla(${currentSunColor.h}, ${currentSunColor.s}%, ${currentSunColor.l}%, 0.8)`);
-        sunHalo.addColorStop(1, `hsla(${currentSunColor.h}, ${currentSunColor.s}%, ${currentSunColor.l - 10}%, 0)`);
+        sunHalo.addColorStop(0, `hsla(${sunColorToDraw.h}, ${sunColorToDraw.s}%, ${sunColorToDraw.l}%, 0.8)`);
+        sunHalo.addColorStop(1, `hsla(${sunColorToDraw.h}, ${sunColorToDraw.s}%, ${sunColorToDraw.l - 10}%, 0)`);
         ctx.fillStyle = sunHalo;
         ctx.fillRect(0, 0, width, height);
 
-        ctx.fillStyle = `hsl(${currentSunColor.h}, ${currentSunColor.s}%, ${currentSunColor.l}%)`;
+        ctx.fillStyle = `hsl(${sunColorToDraw.h}, ${sunColorToDraw.s}%, ${sunColorToDraw.l}%)`;
         ctx.beginPath();
         ctx.arc(fixedCenterX, fixedCenterY, finalSunSize, 0, Math.PI * 2);
         ctx.fill();
@@ -282,7 +342,7 @@
             ctx.fill();
         });
         
-        // --- Update and Draw Keypress Ripples ---
+        // --- Update and Draw Ripples ---
         for (let i = ripples.length - 1; i >= 0; i--) {
             const r = ripples[i];
             r.update(); r.draw(ctx);
