@@ -233,7 +233,7 @@
             
             // This makes the pulse much more responsive to loud beats and less so to quiet noise,
             // creating a more "dramatic" and noticeable pulse.
-            const effectiveLevel = Math.pow(levelNormalized, 2); 
+            const effectiveLevel = Math.pow(levelNormalized, 50); 
 
             // Convert intensity percentage to a multiplier for the sun's base size
             const pulseMultiplier = (effectiveLevel * pIntensity) / 100.0;
