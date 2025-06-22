@@ -1,5 +1,0 @@
-# Ignore all HTML files
-*.html
-
-# But do NOT ignore OrreryAudio.html
-!OrreryAudio.html
