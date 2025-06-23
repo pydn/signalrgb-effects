@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rocket Liftoff (Audio Visualizer)</title>
+    <meta name="description" content="A music-reactive rocket that pulses on the launchpad, then ignites and launches when the audio hits a peak."/>
+    <meta name="author" content="Gemini"/>
+
+    <!-- Pre-Launch Scene Properties -->
+    <meta property="pulseIntensity" label="Pulse: Intensity (%)" type="number" min="0" max="200" default="100" tooltip="How much the rocket's engine glows with the music's beat."/>
+    <meta property="smoothing" label="Pulse: Reaction Smoothing" type="number" min="0" max="9" default="5" tooltip="Controls the smoothness of the engine pulse. Lower is sharper, higher is smoother."/>
+    <meta property="starColor" label="Stars: Color" type="color" default="#B0C4DE" tooltip="The color of the twinkling stars in the background."/>
+    <meta property="rocketColor" label="Rocket: Body Color" type="color" default="#E0E0E0" tooltip="The main color of the rocket's fuselage."/>
+
+    <!-- Ignition & Liftoff Properties -->
+    <meta property="liftoffThreshold" label="Liftoff: Loudness Threshold (%)" type="number" min="80" max="100" default="90" tooltip="The audio level required to trigger the launch sequence."/>
+    <meta property="liftoffHoldTime" label="Liftoff: Trigger Duration (ms)" type="number" min="50" max="1000" default="500" tooltip="How long the audio must stay above the threshold to trigger launch."/>
+    <meta property="flameStartColor" label="Flame: Core Color" type="color" default="#FFFF8D" tooltip="The color at the core of the engine flame."/>
+    <meta property="flameEndColor" label="Flame: Edge Color" type="color" default="#FF4500" tooltip="The color at the outer edge of the engine flame."/>
+    <meta property="smokeColor" label="Smoke: Plume Color" type="color" default="#FFFFFF" tooltip="The color of the thick smoke plumes during ignition."/>
+    
+    <!-- Ascent Scene Properties -->
+    <meta property="ascentSpeed" label="Ascent: Speed Multiplier" type="number" min="1" max="10" default="5" tooltip="How fast the rocket accelerates into the sky after launch."/>
+
+</head>
+
+<body style="margin: 0; padding: 0; background-color: #050214;">
+    <canvas id="rocketCanvas"></canvas>
+</body>
+
+<script>
+//================================================
+// 1. SETUP & INITIALIZATION
+//================================================
+const canvas = document.getElementById("rocketCanvas");
+const ctx = canvas.getContext("2d");
+
+// --- Grid & Scaling ---
+const GRID_WIDTH = 16;
+const GRID_HEIGHT = 32;
+let scale, offsetX, offsetY;
+
+// --- State Machine ---
+let currentScene = 'prelaunch'; // prelaunch, ignition, ascent
+let sceneElapsedTime = 0;
+let highAudioTimer = 0;
+let prelaunchSceneTime = 0; // Timer for the prelaunch phase
+const MIN_PRELAUNCH_TIME = 30; // 30 seconds minimum prelaunch time
+
+// --- Animation State ---
+let rocketY = 0;
+let currentPulseAmount = 0;
+let prelaunchBuildup = 0; // Controls the size growth during prelaunch (0 to 1)
+let stars = [];
+let smokeParticles = [];
+
+// --- Shape Definitions ---
+const ROCKET_BODY_POINTS = [
+    // Nose cone
+    {x: 7, y: 18},
+    {x: 6, y: 19}, {x: 7, y: 19}, {x: 8, y: 19},
+    // Body
+    {x: 6, y: 20}, {x: 7, y: 20}, {x: 8, y: 20},
+    {x: 5, y: 21}, {x: 6, y: 21}, {x: 7, y: 21}, {x: 8, y: 21}, {x: 9, y: 21},
+    {x: 5, y: 22}, {x: 6, y: 22}, {x: 7, y: 22}, {x: 8, y: 22}, {x: 9, y: 22},
+    {x: 5, y: 23}, {x: 6, y: 23}, {x: 7, y: 23}, {x: 8, y: 23}, {x: 9, y: 23},
+    {x: 5, y: 24}, {x: 6, y: 24}, {x: 7, y: 24}, {x: 8, y: 24}, {x: 9, y: 24},
+    {x: 5, y: 25}, {x: 6, y: 25}, {x: 7, y: 25}, {x: 8, y: 25}, {x: 9, y: 25},
+    {x: 5, y: 26}, {x: 6, y: 26}, {x: 7, y: 26}, {x: 8, y: 26}, {x: 9, y: 26},
+    {x: 5, y: 27}, {x: 6, y: 27}, {x: 7, y: 27}, {x: 8, y: 27}, {x: 9, y: 27},
+    {x: 5, y: 28}, {x: 6, y: 28}, {x: 7, y: 28}, {x: 8, y: 28}, {x: 9, y: 28},
+    {x: 5, y: 29}, {x: 6, y: 29}, {x: 7, y: 29}, {x: 8, y: 29}, {x: 9, y: 29},
+    // Fins
+    {x: 4, y: 30}, {x: 5, y: 30}, {x: 6, y: 30}, {x: 7, y: 30}, {x: 8, y: 30}, {x: 9, y: 30}, {x: 10, y: 30},
+    {x: 4, y: 31}, {x: 5, y: 31}, {x: 6, y: 31}, {x: 7, y: 31}, {x: 8, y: 31}, {x: 9, y: 31}, {x: 10, y: 31}
+];
+const STAR_POINTS = [
+    {x: 2, y: 5}, {x: 13, y: 2}, {x: 8, y: 8}, {x: 5, y: 12}, {x: 11, y: 15}, 
+    {x: 1, y: 20}, {x: 14, y: 22}, {x: 6, y: 1}, {x: 9, y: 18}
+];
+
+
+// --- Utility Functions ---
+function lerp(a, b, t) { return a + (b - a) * t; }
+function easeInQuad(t) { return t * t; }
+function easeInCirc(t) { return 1 - Math.sqrt(1 - Math.pow(t, 2)); }
+function hexToRgba(hex, alpha = 1) {
+    if (!hex) return `rgba(0,0,0,${alpha})`;
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+
+//================================================
+// 2. SCENE MANAGEMENT & DRAWING
+//================================================
+
+function transitionToScene(sceneName) {
+    currentScene = sceneName;
+    sceneElapsedTime = 0;
+    // Reset specific states when entering a scene
+    if (sceneName === 'ignition') {
+        smokeParticles = []; // Clear old smoke
+    }
+    if (sceneName === 'prelaunch') {
+        rocketY = 0; // Reset rocket position
+        prelaunchSceneTime = 0; // Reset prelaunch timer
+        prelaunchBuildup = 0; // Reset buildup effect
+    }
+}
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const scaleX = canvas.width / GRID_WIDTH;
+    const scaleY = canvas.height / GRID_HEIGHT;
+    scale = Math.min(scaleX, scaleY);
+
+    offsetX = (canvas.width - (GRID_WIDTH * scale)) / 2;
+    offsetY = (canvas.height - (GRID_HEIGHT * scale)) / 2;
+
+    stars = STAR_POINTS.map(p => ({ ...p, alpha: Math.random() }));
+}
+
+// --- Drawing Helpers ---
+
+function drawRocket(yOffset = 0) {
+    const rColor = typeof rocketColor !== 'undefined' ? rocketColor : '#E0E0E0';
+    ctx.fillStyle = rColor;
+    ROCKET_BODY_POINTS.forEach(p => {
+        ctx.fillRect(
+            offsetX + p.x * scale,
+            offsetY + (p.y + yOffset) * scale,
+            scale,
+            scale
+        );
+    });
+}
+
+function drawStars(yOffset = 0, globalAlpha = 1) {
+    const sColor = typeof starColor !== 'undefined' ? starColor : '#B0C4DE';
+    stars.forEach(star => {
+        star.alpha += (Math.random() - 0.5) * 0.05;
+        star.alpha = Math.max(0.2, Math.min(1, star.alpha));
+        
+        ctx.fillStyle = hexToRgba(sColor, star.alpha * globalAlpha);
+        ctx.beginPath();
+        ctx.arc(
+            offsetX + star.x * scale + scale / 2,
+            offsetY + (star.y + yOffset) * scale + scale / 2,
+            scale * 0.2,
+            0, Math.PI * 2
+        );
+        ctx.fill();
+    });
+}
+
+// --- Scene-Specific Logic ---
+
+function updateAndDrawPrelaunch(deltaTime, audioLevel) {
+    // Update prelaunch buildup timer
+    prelaunchSceneTime += deltaTime;
+    prelaunchBuildup = Math.min(prelaunchSceneTime / MIN_PRELAUNCH_TIME, 1);
+
+    // Background
+    drawStars();
+    // Launchpad
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(offsetX, offsetY + (GRID_HEIGHT - 1) * scale, GRID_WIDTH * scale, 1 * scale);
+
+    // Rocket Body
+    drawRocket();
+    
+    // --- Audio-reactive engine pulse ---
+    const pIntensity = typeof pulseIntensity !== 'undefined' ? pulseIntensity : 100;
+    const smoothFactor = (typeof smoothing !== 'undefined' ? smoothing : 5) / 10;
+    
+    const levelNormalized = Math.max(0, (audioLevel + 60) / 60);
+    
+    // **UPDATED FORMULA**: Apply a power curve to make the reaction more dramatic.
+    // This makes quiet sounds have little effect, while loud sounds create a big "bounce".
+    const dramaticLevel = Math.pow(levelNormalized, 3);
+    const targetPulseAmount = dramaticLevel * (pIntensity / 100);
+
+    currentPulseAmount = lerp(currentPulseAmount, targetPulseAmount, 1 - smoothFactor);
+    
+    if (currentPulseAmount > 0.05) {
+        const flameCore = typeof flameStartColor !== 'undefined' ? flameStartColor : '#FFFF8D';
+        // The radius now grows horizontally based on the prelaunchBuildup
+        const maxPulseRadius = lerp(scale * 2, scale * GRID_WIDTH, prelaunchBuildup);
+        
+        const grad = ctx.createRadialGradient(
+            offsetX + 7.5 * scale, offsetY + 31.5 * scale, 0,
+            offsetX + 7.5 * scale, offsetY + 31.5 * scale, maxPulseRadius * currentPulseAmount
+        );
+        grad.addColorStop(0, hexToRgba(flameCore, 0.9));
+        grad.addColorStop(1, hexToRgba(flameCore, 0));
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height); // Draw across whole canvas
+    }
+}
+
+function updateAndDrawIgnition(deltaTime) {
+    const IGNITION_DURATION = 2; // seconds
+    const progress = Math.min(sceneElapsedTime / IGNITION_DURATION, 1);
+    
+    rocketY = lerp(0, -8, easeInQuad(progress));
+    
+    drawStars();
+    drawRocket(rocketY);
+
+    // Fire expands downwards and outwards to fill the screen bottom
+    const fireHeight = lerp(0, 10, progress);
+    const flameCore = typeof flameStartColor !== 'undefined' ? flameStartColor : '#FFFF8D';
+    const flameEdge = typeof flameEndColor !== 'undefined' ? flameEndColor : '#FF4500';
+    
+    const grad = ctx.createLinearGradient(
+        0, offsetY + (31 + rocketY) * scale,
+        0, offsetY + (31 + rocketY + fireHeight) * scale
+    );
+    grad.addColorStop(0, flameCore);
+    grad.addColorStop(1, flameEdge);
+    ctx.fillStyle = grad;
+    ctx.fillRect(
+        offsetX,
+        offsetY + (31 + rocketY) * scale,
+        GRID_WIDTH * scale,
+        fireHeight * scale
+    );
+
+    // Smoke billows outwards and up to fill the bottom
+    const sColorHex = typeof smokeColor !== 'undefined' ? smokeColor : '#FFFFFF';
+    for (let i = 0; i < 5; i++) {
+        smokeParticles.push({
+            x: Math.random() * GRID_WIDTH,
+            y: 31 + rocketY + Math.random() * 4,
+            vx: (Math.random() - 0.5) * 5,
+            vy: (Math.random() - 0.5) * 4 - 2,
+            radius: Math.random() * 4 + 2,
+            alpha: 1
+        });
+    }
+    
+    smokeParticles.forEach(p => {
+        p.x += p.vx * deltaTime;
+        p.y += p.vy * deltaTime;
+        p.radius += 1 * deltaTime;
+        p.alpha -= 0.3 * deltaTime;
+        ctx.fillStyle = hexToRgba(sColorHex, Math.max(0, p.alpha * 0.8));
+        ctx.beginPath();
+        ctx.arc(offsetX + p.x * scale, offsetY + p.y * scale, p.radius * scale, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    smokeParticles = smokeParticles.filter(p => p.alpha > 0);
+}
+
+function updateAndDrawAscent(deltaTime) {
+    const speed = (typeof ascentSpeed !== 'undefined' ? ascentSpeed : 5);
+    const progress = Math.min(sceneElapsedTime / (10 / speed), 1);
+
+    const startY = -8;
+    const endY = -48;
+    rocketY = lerp(startY, endY, easeInCirc(progress));
+
+    const starYOffset = lerp(0, GRID_HEIGHT, progress);
+
+    drawStars(starYOffset);
+    drawRocket(rocketY);
+
+    const flameCore = typeof flameStartColor !== 'undefined' ? flameStartColor : '#FFFF8D';
+    const flameEdge = typeof flameEndColor !== 'undefined' ? flameEndColor : '#FF4500';
+    const flameHeight = 5;
+    const grad = ctx.createLinearGradient(
+        0, offsetY + (32 + rocketY) * scale,
+        0, offsetY + (32 + rocketY + flameHeight) * scale
+    );
+    grad.addColorStop(0, flameCore);
+    grad.addColorStop(1, flameEdge);
+    ctx.fillStyle = grad;
+    const flickerWidth = (4 * scale) * (1 + (Math.random() - 0.5) * 0.4);
+    ctx.fillRect(
+        offsetX + (7.5 * scale) - (flickerWidth / 2),
+        offsetY + (32 + rocketY) * scale,
+        flickerWidth,
+        flameHeight * scale
+    );
+    
+    if (progress >= 1) {
+        transitionToScene('prelaunch');
+    }
+}
+
+
+//================================================
+// 3. THE RENDER LOOP
+//================================================
+let lastTime = 0;
+function render(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    const deltaTime = (timestamp - lastTime) / 1000.0;
+    lastTime = timestamp;
+    sceneElapsedTime += deltaTime;
+
+    ctx.fillStyle = '#050214';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    let audioLevel = -100;
+    let audioIsActive = false;
+    if (typeof engine !== 'undefined' && engine.audio) {
+        audioLevel = engine.audio.level || -100;
+        if (audioLevel > -100) { audioIsActive = true; }
+    }
+
+    // --- Scene Logic ---
+    switch (currentScene) {
+        case 'prelaunch':
+            updateAndDrawPrelaunch(deltaTime, audioLevel);
+            // Check for liftoff trigger
+            const threshold = typeof liftoffThreshold !== 'undefined' ? liftoffThreshold : 90;
+            const holdTime = (typeof liftoffHoldTime !== 'undefined' ? liftoffHoldTime : 500) / 1000.0;
+            const levelNormalized = (audioLevel + 100) / 100;
+
+            if (audioIsActive && (levelNormalized * 100) >= threshold) {
+                highAudioTimer += deltaTime;
+            } else {
+                highAudioTimer = 0;
+            }
+            // Launch only if audio is loud AND min prelaunch time has passed
+            if (highAudioTimer >= holdTime && prelaunchSceneTime >= MIN_PRELAUNCH_TIME) {
+                transitionToScene('ignition');
+            }
+            break;
+            
+        case 'ignition':
+            updateAndDrawIgnition(deltaTime);
+            if (sceneElapsedTime >= 2.0) {
+                transitionToScene('ascent');
+            }
+            break;
+
+        case 'ascent':
+            updateAndDrawAscent(deltaTime);
+            break;
+    }
+
+    window.requestAnimationFrame(render);
+}
+
+// --- Initial Kick-off ---
+window.addEventListener('resize', resizeCanvas, false);
+canvas.addEventListener('click', () => {
+    transitionToScene('prelaunch');
+});
+
+resizeCanvas();
+window.requestAnimationFrame(render);
+
+</script>
+</html>
