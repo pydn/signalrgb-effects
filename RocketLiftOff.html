@@ -45,6 +45,7 @@ let sceneElapsedTime = 0;
 let highAudioTimer = 0;
 let prelaunchSceneTime = 0; // Timer for the prelaunch phase
 const MIN_PRELAUNCH_TIME = 30; // 30 seconds minimum prelaunch time
+const MIN_IN_SPACE_TIME = 30; // 30 seconds minimum in-space time
 
 // --- Animation State ---
 let rocketY = 0;
@@ -54,7 +55,6 @@ let stars = [];
 let smokeParticles = [];
 
 // --- Shape Definitions ---
-// **UPDATED**: Points adjusted for a wider rocket body
 const ROCKET_BODY_POINTS = [
     // Nose cone
     {x: 7, y: 18},
@@ -83,7 +83,7 @@ const STAR_POINTS = [
 // --- Utility Functions ---
 function lerp(a, b, t) { return a + (b - a) * t; }
 function easeInQuad(t) { return t * t; }
-function easeInCirc(t) { return 1 - Math.sqrt(1 - Math.pow(t, 2)); }
+function easeOutQuad(t) { return t * (2 - t); }
 function hexToRgba(hex, alpha = 1) {
     if (!hex) return `rgba(0,0,0,${alpha})`;
     const r = parseInt(hex.slice(1, 3), 16);
@@ -127,9 +127,18 @@ function resizeCanvas() {
 
 // --- Drawing Helpers ---
 
-function drawRocket(yOffset = 0) {
+function drawRocket(yOffset = 0, horizontalScale = 1) {
     const rColor = typeof rocketColor !== 'undefined' ? rocketColor : '#E0E0E0';
     ctx.fillStyle = rColor;
+    
+    // Save context, translate to rocket's center, scale, translate back, then draw
+    ctx.save();
+    // The rocket shape is centered around x=7.5, so we use that for scaling
+    const centerX = offsetX + 7.5 * scale;
+    ctx.translate(centerX, 0);
+    ctx.scale(horizontalScale, 1);
+    ctx.translate(-centerX, 0);
+
     ROCKET_BODY_POINTS.forEach(p => {
         ctx.fillRect(
             offsetX + p.x * scale,
@@ -138,6 +147,8 @@ function drawRocket(yOffset = 0) {
             scale
         );
     });
+    
+    ctx.restore(); // Restore context to remove scaling for other elements
 }
 
 function drawStars(yOffset = 0, globalAlpha = 1) {
@@ -180,7 +191,6 @@ function updateAndDrawPrelaunch(deltaTime, audioLevel) {
     
     const levelNormalized = Math.max(0, (audioLevel + 60) / 60);
     
-    // Apply a power curve to make the reaction more dramatic.
     const dramaticLevel = Math.pow(levelNormalized, 3);
     const targetPulseAmount = dramaticLevel * (pIntensity / 100);
 
@@ -188,7 +198,6 @@ function updateAndDrawPrelaunch(deltaTime, audioLevel) {
     
     if (currentPulseAmount > 0.05) {
         const flameCore = typeof flameStartColor !== 'undefined' ? flameStartColor : '#FFFF8D';
-        // The radius now grows horizontally based on the prelaunchBuildup
         const maxPulseRadius = lerp(scale * 2, scale * GRID_WIDTH, prelaunchBuildup);
         
         const grad = ctx.createRadialGradient(
@@ -198,7 +207,7 @@ function updateAndDrawPrelaunch(deltaTime, audioLevel) {
         grad.addColorStop(0, hexToRgba(flameCore, 0.9));
         grad.addColorStop(1, hexToRgba(flameCore, 0));
         ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, canvas.width, canvas.height); // Draw across whole canvas
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 }
 
@@ -211,7 +220,6 @@ function updateAndDrawIgnition(deltaTime) {
     drawStars();
     drawRocket(rocketY);
 
-    // Fire expands downwards and outwards to fill the screen bottom
     const fireHeight = lerp(0, 10, progress);
     const flameCore = typeof flameStartColor !== 'undefined' ? flameStartColor : '#FFFF8D';
     const flameEdge = typeof flameEndColor !== 'undefined' ? flameEndColor : '#FF4500';
@@ -230,7 +238,6 @@ function updateAndDrawIgnition(deltaTime) {
         fireHeight * scale
     );
 
-    // Smoke billows outwards and up to fill the bottom
     const sColorHex = typeof smokeColor !== 'undefined' ? smokeColor : '#FFFFFF';
     for (let i = 0; i < 5; i++) {
         smokeParticles.push({
@@ -257,48 +264,74 @@ function updateAndDrawIgnition(deltaTime) {
 }
 
 function updateAndDrawAscent(deltaTime, audioLevel) {
-    const speed = (typeof ascentSpeed !== 'undefined' ? ascentSpeed : 5);
-    const progress = Math.min(sceneElapsedTime / (10 / speed), 1);
+    const CENTERING_DURATION = 2.0;
+    const FLY_OFF_DURATION = 2.0;
+    const IN_SPACE_Y = -16;
+    const OFF_SCREEN_Y = -50;
 
-    const startY = -8;
-    const endY = -48;
-    rocketY = lerp(startY, endY, easeInCirc(progress));
-
-    const starYOffset = lerp(0, GRID_HEIGHT, progress);
-
-    drawStars(starYOffset);
-    drawRocket(rocketY);
-
-    // --- Pulsing Flame Calculation ---
     const levelNormalized = Math.max(0, (audioLevel + 60) / 60);
     const dramaticLevel = Math.pow(levelNormalized, 3);
+
+    // --- Rocket Positioning and Fly-off ---
+    if (sceneElapsedTime < MIN_IN_SPACE_TIME) {
+        // Phase 1: Center the rocket
+        if (sceneElapsedTime < CENTERING_DURATION) {
+            const postIgnitionY = -8;
+            rocketY = lerp(postIgnitionY, IN_SPACE_Y, easeOutQuad(sceneElapsedTime / CENTERING_DURATION));
+        } else {
+            rocketY = IN_SPACE_Y;
+        }
+    } else {
+        // Phase 2: Fly off the screen
+        const flyOffProgress = Math.min((sceneElapsedTime - MIN_IN_SPACE_TIME) / FLY_OFF_DURATION, 1);
+        rocketY = lerp(IN_SPACE_Y, OFF_SCREEN_Y, easeInQuad(flyOffProgress));
+        
+        // Reset when fully off-screen
+        if (flyOffProgress >= 1) {
+            transitionToScene('prelaunch');
+        }
+    }
+
+    // --- Background and Rocket Drawing ---
+    const starYOffset = (sceneElapsedTime * 2) % GRID_HEIGHT; // Continuous star scroll
+    drawStars(starYOffset);
     
-    const baseFlameHeight = 8; // Longer base trail
-    const pulseFlameHeight = 12; // How much it can grow
-    const finalFlameHeight = baseFlameHeight + (pulseFlameHeight * dramaticLevel); // Combine them
+    const rocketPulseScale = 1 + (dramaticLevel * 0.5); // Pulse rocket width up to 50%
+    drawRocket(rocketY, rocketPulseScale);
+
+    // --- Pulsing Flame Calculation ---
+    const baseFlameHeight = 8; 
+    const pulseFlameHeight = 12; 
+    const finalFlameHeight = baseFlameHeight + (pulseFlameHeight * dramaticLevel); 
 
     const flameCore = typeof flameStartColor !== 'undefined' ? flameStartColor : '#FFFF8D';
     const flameEdge = typeof flameEndColor !== 'undefined' ? flameEndColor : '#FF4500';
     
     const grad = ctx.createLinearGradient(
         0, offsetY + (32 + rocketY) * scale,
-        0, offsetY + (32 + rocketY + finalFlameHeight) * scale // Use final height
+        0, offsetY + (32 + rocketY + finalFlameHeight) * scale
     );
     grad.addColorStop(0, flameCore);
     grad.addColorStop(1, flameEdge);
     ctx.fillStyle = grad;
-    // Flicker width also reacts to the beat now for more drama
-    const flickerWidth = (4 * scale) * (1 + dramaticLevel * 0.5 + (Math.random() - 0.5) * 0.2);
-    ctx.fillRect(
-        offsetX + (7.5 * scale) - (flickerWidth / 2),
-        offsetY + (32 + rocketY) * scale,
-        flickerWidth,
-        finalFlameHeight * scale // Use final height
-    );
     
-    if (progress >= 1) {
-        transitionToScene('prelaunch');
-    }
+    // Flame width also pulses horizontally
+    const baseWidth = 6 * scale; // Wider base for the flame
+    const maxPulseWidth = canvas.width / 2; // Target: half the screen width
+    // Interpolate between base and max based on audio for a dramatic horizontal pulse
+    const finalWidth = lerp(baseWidth, maxPulseWidth, dramaticLevel);
+
+    const randomFlicker = (Math.random() - 0.5) * 0.2;
+    const finalWidthWithFlicker = finalWidth * (1 + randomFlicker);
+    
+    // Correctly center the flame under the rocket
+    const flameCenterX = offsetX + 7.5 * scale;
+    ctx.fillRect(
+        flameCenterX - (finalWidthWithFlicker / 2),
+        offsetY + (32 + rocketY) * scale,
+        finalWidthWithFlicker,
+        finalFlameHeight * scale
+    );
 }
 
 
