@@ -180,8 +180,7 @@ function updateAndDrawPrelaunch(deltaTime, audioLevel) {
     
     const levelNormalized = Math.max(0, (audioLevel + 60) / 60);
     
-    // **UPDATED FORMULA**: Apply a power curve to make the reaction more dramatic.
-    // This makes quiet sounds have little effect, while loud sounds create a big "bounce".
+    // Apply a power curve to make the reaction more dramatic.
     const dramaticLevel = Math.pow(levelNormalized, 3);
     const targetPulseAmount = dramaticLevel * (pIntensity / 100);
 
@@ -257,7 +256,7 @@ function updateAndDrawIgnition(deltaTime) {
     smokeParticles = smokeParticles.filter(p => p.alpha > 0);
 }
 
-function updateAndDrawAscent(deltaTime) {
+function updateAndDrawAscent(deltaTime, audioLevel) {
     const speed = (typeof ascentSpeed !== 'undefined' ? ascentSpeed : 5);
     const progress = Math.min(sceneElapsedTime / (10 / speed), 1);
 
@@ -270,22 +269,31 @@ function updateAndDrawAscent(deltaTime) {
     drawStars(starYOffset);
     drawRocket(rocketY);
 
+    // --- Pulsing Flame Calculation ---
+    const levelNormalized = Math.max(0, (audioLevel + 60) / 60);
+    const dramaticLevel = Math.pow(levelNormalized, 3);
+    
+    const baseFlameHeight = 8; // Longer base trail
+    const pulseFlameHeight = 12; // How much it can grow
+    const finalFlameHeight = baseFlameHeight + (pulseFlameHeight * dramaticLevel); // Combine them
+
     const flameCore = typeof flameStartColor !== 'undefined' ? flameStartColor : '#FFFF8D';
     const flameEdge = typeof flameEndColor !== 'undefined' ? flameEndColor : '#FF4500';
-    const flameHeight = 5;
+    
     const grad = ctx.createLinearGradient(
         0, offsetY + (32 + rocketY) * scale,
-        0, offsetY + (32 + rocketY + flameHeight) * scale
+        0, offsetY + (32 + rocketY + finalFlameHeight) * scale // Use final height
     );
     grad.addColorStop(0, flameCore);
     grad.addColorStop(1, flameEdge);
     ctx.fillStyle = grad;
-    const flickerWidth = (4 * scale) * (1 + (Math.random() - 0.5) * 0.4);
+    // Flicker width also reacts to the beat now for more drama
+    const flickerWidth = (4 * scale) * (1 + dramaticLevel * 0.5 + (Math.random() - 0.5) * 0.2);
     ctx.fillRect(
         offsetX + (7.5 * scale) - (flickerWidth / 2),
         offsetY + (32 + rocketY) * scale,
         flickerWidth,
-        flameHeight * scale
+        finalFlameHeight * scale // Use final height
     );
     
     if (progress >= 1) {
@@ -342,7 +350,7 @@ function render(timestamp) {
             break;
 
         case 'ascent':
-            updateAndDrawAscent(deltaTime);
+            updateAndDrawAscent(deltaTime, audioLevel);
             break;
     }
 
